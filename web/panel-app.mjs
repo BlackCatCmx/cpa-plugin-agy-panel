@@ -64,7 +64,8 @@ function renderCard(account) {
   const identity = node('div', 'identity');
   const name = node('div', 'name', account.email || account.label || account.name);
   name.title = name.textContent;
-  identity.append(node('span', 'plan' + (saved.subscription && saved.subscription.id !== 'free-tier' ? ' paid' : ''), saved.subscription?.label ?? '未知'), name);
+  const planTone = { 'g1-pro-tier': 'pro', 'g1-ultra-tier': 'ultra', 'g1-ultra-lite-tier': 'ultra-lite' }[saved.subscription?.id] ?? '';
+  identity.append(node('span', `plan ${planTone}`, saved.subscription?.label ?? '未知'), name);
   const actions = node('div', 'head-actions');
   const busy = state.refreshing.has(key) || state.statusUpdating.has(key) || state.proxyBusy;
   const canToggle = account.runtime_only !== true && Boolean(account.name && account.auth_index);
@@ -94,20 +95,25 @@ function renderCard(account) {
   if (!groups.length) card.append(node('div', 'empty', saved.quotaAt ? '暂无可显示的额度分组' : '暂无额度，点击刷新获取'));
   for (const group of groups) {
     const section = node('section', 'group');
-    section.append(node('h2', '', group.label));
-    if (group.description) section.append(node('p', '', group.description));
+    const title = node('h2', '', group.label);
+    title.title = group.description;
+    section.append(title);
     for (const bucket of group.buckets) {
       const row = node('div', 'quota-row');
       const top = node('div', 'row-head');
-      top.append(node('span', '', bucket.label), node('span', 'remaining', `剩余 ${Math.round(bucket.remaining)}%`));
+      const label = { 'Five Hour Limit Remaining': '五小时额度', 'Weekly Limit Remaining': '每周额度' }[bucket.label] ?? bucket.label;
+      const value = node('div', 'quota-value');
+      value.append(node('span', 'remaining', `剩余 ${Math.round(bucket.remaining)}%`));
+      top.append(node('span', 'quota-label', label), value);
       const track = node('div', 'track');
       const fill = node('div', 'fill');
       fill.style.width = `${bucket.remaining}%`;
       if (bucket.remaining < 30) fill.style.background = 'var(--red)';
       track.append(fill);
-      const reset = node('div', 'reset', resetLabel(bucket.resetTime));
+      const reset = node('span', 'reset', resetLabel(bucket.resetTime));
       reset.title = bucket.resetTime ? formatTime(bucket.resetTime) : '';
-      row.append(top, reset, track);
+      value.append(reset);
+      row.append(top, track);
       section.append(row);
     }
     card.append(section);
