@@ -134,3 +134,19 @@ test('incremental assignment preserves existing proxies and skips unreadable cre
   assert.equal(result.succeeded, 2);
   assert.deepEqual(result.failures, [{ name: 'b', error: 'credential read failed' }]);
 });
+
+test('selected credentials receive one proxy directly or multiple proxies in order', async () => {
+  const selected = ['c.json', 'a.json', 'd.json'].map((name) => ({ name, provider: 'antigravity' }));
+  for (const proxies of [['http://p2'], ['http://p1', 'http://p3']]) {
+    const writes = [];
+    await assignProxies(selected, proxies, async (fields) => writes.push(fields));
+    assert.deepEqual(writes, ['a.json', 'c.json', 'd.json'].map((name, index) => ({ name, proxy_url: proxies[index % proxies.length] })));
+  }
+});
+
+test('clearing proxies writes an empty override only to the supplied credentials', async () => {
+  const writes = [];
+  const result = await assignProxies([{ name: 'selected.json', provider: 'antigravity', disabled: true }], [''], async (fields) => writes.push(fields));
+  assert.deepEqual(writes, [{ name: 'selected.json', proxy_url: '' }]);
+  assert.equal(result.succeeded, 1);
+});

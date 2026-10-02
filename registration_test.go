@@ -47,7 +47,7 @@ func TestManagementRegistration(t *testing.T) {
 	if err := json.Unmarshal(response.Result, &result); err != nil {
 		t.Fatalf("decode management registration: %v", err)
 	}
-	if len(result.Resources) != 3 || result.Resources[0]["Path"] != panelPath || result.Resources[1]["Path"] != "/panel-app.mjs" {
+	if len(result.Resources) != 4 || result.Resources[0]["Path"] != panelPath || result.Resources[1]["Path"] != "/panel-app.mjs" || result.Resources[3]["Path"] != "/panel-proxy.mjs" {
 		t.Fatalf("unexpected resources: %#v", result.Resources)
 	}
 }

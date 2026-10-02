@@ -15,6 +15,7 @@ func TestServePanelResources(t *testing.T) {
 		{path: "/v0/resource/plugins/" + pluginID + panelPath, contentType: "text/html", contains: "Antigravity 额度"},
 		{path: "/v0/resource/plugins/" + pluginID + "/panel-app.mjs", contentType: "text/javascript", contains: "initialize()"},
 		{path: "/panel-logic.mjs", contentType: "text/javascript", contains: "parseQuota"},
+		{path: "/panel-proxy.mjs", contentType: "text/javascript", contains: "setupProxyManager"},
 	}
 	for _, test := range tests {
 		response := servePanelResource(managementRequest{Method: "GET", Path: test.path})

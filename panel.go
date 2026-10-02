@@ -34,7 +34,7 @@ func servePanelResource(request managementRequest) managementResponse {
 	if resourcePath == "" {
 		resourcePath = "panel.html"
 	}
-	if resourcePath != "panel.html" && resourcePath != "panel-app.mjs" && resourcePath != "panel-logic.mjs" {
+	if resourcePath != "panel.html" && resourcePath != "panel-app.mjs" && resourcePath != "panel-logic.mjs" && resourcePath != "panel-proxy.mjs" {
 		return textResponse(404, "not found")
 	}
 

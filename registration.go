@@ -36,6 +36,7 @@ func managementRegistration() any {
 		},
 		{"Path": "/panel-app.mjs"},
 		{"Path": "/panel-logic.mjs"},
+		{"Path": "/panel-proxy.mjs"},
 	}}
 }
 

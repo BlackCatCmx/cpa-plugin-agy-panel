@@ -1,12 +1,13 @@
 import {
-  DEFAULT_USER_AGENT, accountKey, assignProxies, buildRefreshRequest, buildStatusToggleRequest, fetchQuotaGroups, formatTime,
-  parseProxies, parseSubscription, parseUpstream, pruneSnapshots, resetLabel, selectAccounts, validateUserAgent, visibleQuotaGroups,
+  DEFAULT_USER_AGENT, accountKey, buildRefreshRequest, buildStatusToggleRequest, fetchQuotaGroups, formatTime,
+  parseSubscription, parseUpstream, pruneSnapshots, resetLabel, selectAccounts, validateUserAgent, visibleQuotaGroups,
 } from './panel-logic.mjs';
+import { setupProxyManager } from './panel-proxy.mjs';
 
 const pluginID = 'cpa-plugin-agy-panel';
 const cacheKey = 'cpa-agy-panel-quota-v1';
 const state = { accounts: [], snapshots: new Map(), errors: new Map(), refreshing: new Set(), statusUpdating: new Set(), config: {}, page: 1, polling: false, proxyBusy: false, session: null };
-const ui = Object.fromEntries(['summary', 'banner', 'grid', 'pagination', 'proxies', 'proxy-message', 'save-proxies', 'apply-proxies', 'increment-proxies', 'search', 'filter', 'reload', 'theme', 'show-claude-gpt', 'display-message', 'ua', 'save-ua', 'ua-message'].map((id) => [id, document.getElementById(id)]));
+const ui = Object.fromEntries(['summary', 'banner', 'grid', 'pagination', 'open-proxy', 'search', 'filter', 'reload', 'theme', 'show-claude-gpt', 'display-message', 'ua', 'save-ua', 'ua-message'].map((id) => [id, document.getElementById(id)]));
 
 function readSession() {
   let raw = localStorage.getItem('cli-proxy-auth');
@@ -122,6 +123,7 @@ function renderCard(account) {
 }
 
 function render() {
+  ui['open-proxy'].disabled = !state.session || state.proxyBusy || state.refreshing.size > 0 || state.statusUpdating.size > 0;
   ui.summary.replaceChildren();
   for (const [label, count] of [['账号', state.accounts.length], ['已缓存套餐', state.accounts.filter((a) => state.snapshots.get(accountKey(a))?.subscription).length], ['已停用', state.accounts.filter((a) => a.disabled).length]]) {
     const item = node('span');
@@ -228,43 +230,18 @@ async function saveConfig(fields) {
   Object.assign(state.config, fields);
 }
 
-async function editProxies(mode) {
-  if (state.proxyBusy) return;
-  state.proxyBusy = true;
-  for (const id of ['save-proxies', 'apply-proxies', 'increment-proxies', 'proxies']) ui[id].disabled = true;
-  ui['proxy-message'].textContent = '';
-  render();
-  try {
-    const text = ui.proxies.value.trim();
-    const proxies = text ? parseProxies(text) : [];
-    if (mode !== 'save' && !proxies.length) throw new Error('请至少填写一个代理地址');
-    await saveConfig({ proxy_list: text });
-    ui['proxy-message'].textContent = '代理列表已保存';
-    if (mode !== 'save') {
-      updateAccounts(await managementFetch('/auth-files'));
-      const accounts = state.accounts;
-      if (!accounts.length) throw new Error('没有 Antigravity 凭证可供分配');
-      const result = await assignProxies(accounts, proxies,
-        (fields) => managementFetch('/auth-files/fields', { method: 'PATCH', body: JSON.stringify(fields) }),
-        (progress) => { ui['proxy-message'].textContent = `已处理 ${progress.processed} / ${progress.total}，成功 ${progress.succeeded}，跳过 ${progress.skipped}，失败 ${progress.failed}`; },
-        mode === 'incremental' ? async (account) => {
-          const credential = await managementFetch(`/auth-files/download?name=${encodeURIComponent(account.name)}`);
-          return credential.proxy_url;
-        } : undefined,
-      );
-      ui['proxy-message'].textContent = `完成：成功 ${result.succeeded}，跳过 ${result.skipped}，失败 ${result.failures.length}` + result.failures.map((failure) => `\n${failure.name}：${failure.error}`).join('');
-    }
-  } catch (error) { ui['proxy-message'].textContent = error.message; }
-  finally {
-    state.proxyBusy = false;
-    for (const id of ['save-proxies', 'apply-proxies', 'increment-proxies', 'proxies']) ui[id].disabled = false;
+setupProxyManager({
+  getConfig: () => state.config,
+  loadAccounts: async () => {
+    updateAccounts(await managementFetch('/auth-files'));
     render();
-  }
-}
+    return state.accounts;
+  },
+  managementFetch,
+  saveConfig,
+  setBusy: (busy) => { state.proxyBusy = busy; render(); },
+});
 
-ui['save-proxies'].addEventListener('click', () => editProxies('save'));
-ui['apply-proxies'].addEventListener('click', () => editProxies('overwrite'));
-ui['increment-proxies'].addEventListener('click', () => editProxies('incremental'));
 ui['save-ua'].addEventListener('click', async () => {
   ui['save-ua'].disabled = true;
   try {
@@ -297,17 +274,16 @@ ui.theme.addEventListener('click', () => {
 });
 
 async function initialize() {
-  for (const id of ['save-proxies', 'apply-proxies', 'increment-proxies', 'reload', 'show-claude-gpt', 'save-ua']) ui[id].disabled = true;
+  for (const id of ['open-proxy', 'reload', 'show-claude-gpt', 'save-ua']) ui[id].disabled = true;
   try {
     document.documentElement.dataset.theme = localStorage.getItem('cpa-agy-panel-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     state.session = readSession();
     const cached = localStorage.getItem(cacheKey);
     if (cached) state.snapshots = new Map(JSON.parse(cached));
     state.config = await managementFetch(`/plugins/${pluginID}/config`);
-    ui.proxies.value = state.config.proxy_list ?? '';
     ui.ua.value = state.config.refresh_user_agent || DEFAULT_USER_AGENT;
     ui['show-claude-gpt'].checked = state.config.show_claude_gpt === true;
-    for (const id of ['save-proxies', 'apply-proxies', 'increment-proxies', 'reload', 'show-claude-gpt', 'save-ua']) ui[id].disabled = false;
+    for (const id of ['open-proxy', 'reload', 'show-claude-gpt', 'save-ua']) ui[id].disabled = false;
     await pollAccounts();
     setInterval(() => { if (!document.hidden) pollAccounts(); }, 30_000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) pollAccounts(); });
