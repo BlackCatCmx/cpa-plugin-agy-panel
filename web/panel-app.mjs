@@ -62,7 +62,7 @@ function renderCard(account) {
   const card = node('article', `card${account.disabled ? ' disabled' : ''}`);
   const head = node('div', 'card-head');
   const identity = node('div', 'identity');
-  const name = node('div', 'name', account.email || account.label || account.name);
+  const name = node('div', 'name', account.name);
   name.title = name.textContent;
   const planTone = { 'g1-pro-tier': 'pro', 'g1-ultra-tier': 'ultra', 'g1-ultra-lite-tier': 'ultra-lite' }[saved.subscription?.id] ?? '';
   identity.append(node('span', `plan ${planTone}`, saved.subscription?.label ?? '未知'), name);
