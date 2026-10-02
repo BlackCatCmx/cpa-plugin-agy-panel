@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "plugins": [{
+    "id": "cpa-plugin-agy-panel",
+    "name": "CPA AGY Panel",
+    "description": "Antigravity 套餐与额度持久化面板，支持凭证代理批量分配。",
+    "author": "BlackCatCmx",
+    "version": "0.1.0",
+    "repository": "https://github.com/BlackCatCmx/cpa-plugin-agy-panel",
+    "tags": ["management", "antigravity", "quota", "proxy"]
+  }]
+}

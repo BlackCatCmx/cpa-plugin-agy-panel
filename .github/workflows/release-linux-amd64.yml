@@ -1,0 +1,124 @@
+name: Release Linux amd64
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "*.go"
+      - "web/**"
+      - "web-test/**"
+      - go.mod
+      - go.sum
+      - registry.json
+      - .github/workflows/release-linux-amd64.yml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional version check. When set, it must match registry.json.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-linux-amd64-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout selected revision
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Determine release version
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$REF" != "refs/heads/main" ]]; then
+            echo "releases can only be created from main" >&2
+            exit 1
+          fi
+
+          latest_version="$(
+            gh api --paginate "/repos/$REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+              | sed -nE 's/^[vV]([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' \
+              | sort -V \
+              | tail -n 1
+          )"
+          registry_version="$(jq -r '.plugins[] | select(.id == "cpa-plugin-agy-panel") | .version' registry.json)"
+
+          if [[ ! "$registry_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "registry version must look like 0.1.0" >&2
+            exit 1
+          fi
+          VERSION="$registry_version"
+          if [[ -n "$REQUESTED_VERSION" && "$REQUESTED_VERSION" != "$VERSION" ]]; then
+            echo "requested version $REQUESTED_VERSION must match registry version $VERSION" >&2
+            exit 1
+          fi
+          if [[ -n "$latest_version" ]] && [[ "$(printf '%s\n%s\n' "$latest_version" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" || "$latest_version" == "$VERSION" ]]; then
+            echo "registry version $VERSION must be greater than the latest release $latest_version" >&2
+            exit 1
+          fi
+
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "release v$VERSION already exists" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Test browser logic
+        run: node --test web-test/*.test.mjs
+
+      - name: Test and build Linux amd64
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src" \
+            -w /src \
+            -e PLUGIN_VERSION="$VERSION" \
+            golang:1.26-bookworm \
+            bash -c 'go test ./... && go vet ./... && CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags "-X main.pluginVersion=$PLUGIN_VERSION" -buildmode=c-shared -o dist/cpa-plugin-agy-panel.so .'
+          file dist/cpa-plugin-agy-panel.so
+
+      - name: Package release assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          archive="cpa-plugin-agy-panel_${VERSION}_linux_amd64.zip"
+          zip -j "dist/$archive" dist/cpa-plugin-agy-panel.so
+          cd dist
+          sha256sum "$archive" > checksums.txt
+
+      - name: Create GitHub Release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archive="cpa-plugin-agy-panel_${VERSION}_linux_amd64.zip"
+          gh release create "v$VERSION" \
+            "dist/$archive" \
+            dist/checksums.txt \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --generate-notes
