@@ -132,21 +132,26 @@ export function parseProxies(text) {
   return proxies;
 }
 
-export async function assignProxies(accounts, proxies, patch, onProgress = () => {}) {
+export async function assignProxies(accounts, proxies, patch, onProgress = () => {}, readProxy) {
   const targets = selectAccounts({ files: accounts }).sort((a, b) => String(a.name).localeCompare(String(b.name), 'en'));
   let succeeded = 0;
+  let skipped = 0;
   const failures = [];
   for (const [index, account] of targets.entries()) {
     try {
       if (account.runtime_only || !account.name) throw new Error('运行时凭证无法持久化代理');
-      await patch({ name: account.name, proxy_url: proxies[succeeded % proxies.length] });
-      succeeded += 1;
+      if (readProxy && String(await readProxy(account) ?? '').trim()) {
+        skipped += 1;
+      } else {
+        await patch({ name: account.name, proxy_url: proxies[succeeded % proxies.length] });
+        succeeded += 1;
+      }
     } catch (error) {
       failures.push({ name: String(account.name ?? ''), error: error.message });
     }
-    onProgress({ processed: index + 1, total: targets.length, succeeded, failed: failures.length });
+    onProgress({ processed: index + 1, total: targets.length, succeeded, skipped, failed: failures.length });
   }
-  return { succeeded, failures };
+  return { succeeded, skipped, failures };
 }
 
 export function formatTime(value) {

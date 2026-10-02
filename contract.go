@@ -10,7 +10,7 @@ const (
 	panelPath           = "/panel"
 )
 
-var pluginVersion = "0.1.3"
+var pluginVersion = "0.1.4"
 
 type envelope struct {
 	OK     bool            `json:"ok"`

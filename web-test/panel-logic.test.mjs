@@ -121,3 +121,16 @@ test('batch proxy assignment cycles successful writes; failures remain explicit'
   assert.equal(result.succeeded, 2);
   assert.deepEqual(result.failures.map((f) => f.name), ['b', 'c']);
 });
+
+test('incremental assignment preserves existing proxies and skips unreadable credentials', async () => {
+  const accounts = ['a', 'b', 'c', 'd', 'e'].map((name) => ({ name, provider: 'antigravity' }));
+  const writes = [];
+  const result = await assignProxies(accounts, ['http://p1', 'http://p2'], async (fields) => writes.push(fields), undefined, async (account) => {
+    if (account.name === 'b') throw new Error('credential read failed');
+    return { a: 'socks5://existing:1080', c: '', d: undefined, e: 'http://existing' }[account.name];
+  });
+  assert.deepEqual(writes, [{ name: 'c', proxy_url: 'http://p1' }, { name: 'd', proxy_url: 'http://p2' }]);
+  assert.equal(result.skipped, 2);
+  assert.equal(result.succeeded, 2);
+  assert.deepEqual(result.failures, [{ name: 'b', error: 'credential read failed' }]);
+});
