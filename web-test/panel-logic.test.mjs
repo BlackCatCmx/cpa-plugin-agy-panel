@@ -1,6 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { accountKey, assignProxies, buildRefreshRequest, buildStatusToggleRequest, parseProxies, parseQuota, parseSubscription, parseUpstream, pruneSnapshots, selectAccounts, resetLabel, visibleQuotaGroups } from '../web/panel-logic.mjs';
+import { DEFAULT_USER_AGENT, QUOTA_URLS, accountKey, assignProxies, buildRefreshRequest, buildStatusToggleRequest, fetchQuotaGroups, parseProxies, parseQuota, parseSubscription, parseUpstream, pruneSnapshots, selectAccounts, resetLabel, validateUserAgent, visibleQuotaGroups } from '../web/panel-logic.mjs';
+
+test('accounts sort by descending priority, then by name, with missing priority treated as zero', () => {
+  const files = [{ name: 'a', priority: 1 }, { name: 'z', priority: 10 }, { name: 'c', priority: '10' }, { name: 'd' }, { name: 'e', priority: -1 }].map((file) => ({ ...file, provider: 'antigravity' }));
+  assert.deepEqual(selectAccounts({ files }).map((a) => a.name), ['c', 'z', 'a', 'd', 'e']);
+});
+
+test('refresh sends native frontend UA or saved custom UA and unwraps nested payloads', () => {
+  const account = { auth_index: 'a', project_id: 'project-a' };
+  for (const kind of ['quota', 'subscription']) {
+    assert.equal(buildRefreshRequest(account, kind).header['User-Agent'], DEFAULT_USER_AGENT);
+    assert.equal(buildRefreshRequest(account, kind, 'custom-agent/1.0').header['User-Agent'], 'custom-agent/1.0');
+  }
+  const tier = { paidTier: { id: 'g1-ultra-tier' } };
+  assert.equal(parseSubscription(parseUpstream({ status_code: 200, body: JSON.stringify({ body: JSON.stringify(tier) }) })).label, 'Ultra');
+  assert.deepEqual(parseUpstream({ status_code: 200, body: { body: { groups: [] } } }), { groups: [] });
+  assert.throws(() => validateUserAgent('bad\r\nheader'), /英文字符/);
+  assert.throws(() => validateUserAgent(''), /填写/);
+});
+
+test('quota follows native endpoint order and reports failed attempts before success', async () => {
+  const requests = [];
+  const result = await fetchQuotaGroups({ auth_index: 'a', project_id: 'project-a' }, 'custom-agent/1.0', async (request) => {
+    requests.push(request);
+    if (requests.length < 3) return { status_code: 403, body: '{}' };
+    return { status_code: 200, body: { groups: [{ displayName: 'Gemini models', buckets: [{ remainingFraction: 0.98 }] }] } };
+  });
+  assert.deepEqual(requests.map((r) => r.url), QUOTA_URLS);
+  assert.ok(requests.every((r) => r.header['User-Agent'] === 'custom-agent/1.0'));
+  assert.equal(result.groups[0].buckets[0].remaining, 98);
+  assert.match(result.notice, /HTTP 403/);
+  assert.match(result.notice, /切换接口后查询成功/);
+  await assert.rejects(fetchQuotaGroups({ auth_index: 'a', project_id: 'project-a' }, DEFAULT_USER_AGENT, async () => ({ status_code: 403 })), /cloudcode-pa.googleapis.com.*HTTP 403/);
+});
 
 test('cache cleanup removes deleted credentials and retains disabled credentials', () => {
   const enabled = { name: 'a.json', auth_index: 'a', provider: 'antigravity' };
@@ -78,7 +111,7 @@ test('proxy validation supports auth, IPv6 and SOCKS and rejects invalid address
 });
 
 test('batch proxy assignment cycles successful writes; failures remain explicit', async () => {
-  const accounts = [{ name: 'd', provider: 'antigravity', disabled: true }, { name: 'a', provider: 'antigravity' }, { name: 'c', provider: 'antigravity', runtime_only: true }, { name: 'b', provider: 'antigravity' }, { name: 'codex', provider: 'codex' }];
+  const accounts = [{ name: 'd', provider: 'antigravity', disabled: true, priority: 10 }, { name: 'a', provider: 'antigravity' }, { name: 'c', provider: 'antigravity', runtime_only: true }, { name: 'b', provider: 'antigravity' }, { name: 'codex', provider: 'codex' }];
   const writes = [];
   const result = await assignProxies(accounts, ['http://p1', 'http://p2'], async (fields) => {
     if (fields.name === 'b') throw new Error('write failed');

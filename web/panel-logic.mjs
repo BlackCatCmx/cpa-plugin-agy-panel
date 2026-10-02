@@ -1,10 +1,16 @@
 const upstreamBase = 'https://daily-cloudcode-pa.googleapis.com/v1internal:';
+export const DEFAULT_USER_AGENT = 'antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)';
+export const QUOTA_URLS = [
+  upstreamBase + 'retrieveUserQuotaSummary',
+  'https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary',
+  'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
+];
 
 export function selectAccounts(payload) {
   if (!Array.isArray(payload?.files)) throw new Error('CPA 凭证列表格式无效');
   return payload.files
     .filter((file) => String(file.provider || file.type).toLowerCase() === 'antigravity')
-    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'en'));
+    .sort((a, b) => Number(b.priority ?? 0) - Number(a.priority ?? 0) || String(a.name).localeCompare(String(b.name), 'en'));
 }
 
 export function accountKey(account) {
@@ -64,13 +70,13 @@ function windowOrder(window) {
   return ['5h', 'five-hour', 'five_hour'].includes(window) ? 0 : ['weekly', 'week'].includes(window) ? 1 : 2;
 }
 
-export function buildRefreshRequest(account, kind) {
+export function buildRefreshRequest(account, kind, userAgent = DEFAULT_USER_AGENT, url) {
   if (!String(account.auth_index ?? '').trim()) throw new Error('凭证缺少 auth_index');
   if (kind === 'quota' && !String(account.project_id ?? '').trim()) throw new Error('凭证缺少 project_id，无法查询额度');
   return {
     auth_index: String(account.auth_index), method: 'POST',
-    url: upstreamBase + (kind === 'quota' ? 'retrieveUserQuotaSummary' : 'loadCodeAssist'),
-    header: { Authorization: 'Bearer $TOKEN$', 'Content-Type': 'application/json' },
+    url: url ?? upstreamBase + (kind === 'quota' ? 'retrieveUserQuotaSummary' : 'loadCodeAssist'),
+    header: { Authorization: 'Bearer $TOKEN$', 'Content-Type': 'application/json', 'User-Agent': userAgent },
     data: JSON.stringify(kind === 'quota' ? { project: account.project_id } : { metadata: { ideType: 'ANTIGRAVITY' } }),
   };
 }
@@ -80,9 +86,29 @@ export function parseUpstream(response) {
     // 上游原始响应可能含有凭证或代理信息，只展示状态。
     throw new Error(`上游请求失败：HTTP ${response?.status_code ?? '未知'}`);
   }
-  const payload = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+  let payload = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+  if (payload?.body !== undefined) payload = typeof payload.body === 'string' ? JSON.parse(payload.body) : payload.body;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('上游响应格式无效');
   return payload;
+}
+
+export async function fetchQuotaGroups(account, userAgent, sendRequest) {
+  const failures = [];
+  // 与原生前端使用相同地址顺序，切换接口的原因会显示在页面中。
+  for (const url of QUOTA_URLS) {
+    try {
+      const response = await sendRequest(buildRefreshRequest(account, 'quota', userAgent, url));
+      const groups = parseQuota(parseUpstream(response));
+      if (!groups.some((group) => group.buckets.length)) throw new Error('上游暂无可用额度分组');
+      return { groups, notice: failures.length ? `${failures.join('；')}；切换接口后查询成功` : '' };
+    } catch (error) { failures.push(`${new URL(url).hostname}：${error.message}`); }
+  }
+  throw new Error(failures.join('；'));
+}
+
+export function validateUserAgent(value) {
+  if (!value.trim()) throw new Error('请填写 User-Agent');
+  if (/[^\x20-\x7e]/.test(value)) throw new Error('User-Agent 只能包含可打印的英文字符');
 }
 
 export function parseProxies(text) {
@@ -107,7 +133,7 @@ export function parseProxies(text) {
 }
 
 export async function assignProxies(accounts, proxies, patch, onProgress = () => {}) {
-  const targets = selectAccounts({ files: accounts });
+  const targets = selectAccounts({ files: accounts }).sort((a, b) => String(a.name).localeCompare(String(b.name), 'en'));
   let succeeded = 0;
   const failures = [];
   for (const [index, account] of targets.entries()) {

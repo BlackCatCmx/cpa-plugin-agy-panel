@@ -1,12 +1,12 @@
 import {
-  accountKey, assignProxies, buildRefreshRequest, buildStatusToggleRequest, formatTime,
-  parseProxies, parseQuota, parseSubscription, parseUpstream, pruneSnapshots, resetLabel, selectAccounts, visibleQuotaGroups,
+  DEFAULT_USER_AGENT, accountKey, assignProxies, buildRefreshRequest, buildStatusToggleRequest, fetchQuotaGroups, formatTime,
+  parseProxies, parseSubscription, parseUpstream, pruneSnapshots, resetLabel, selectAccounts, validateUserAgent, visibleQuotaGroups,
 } from './panel-logic.mjs';
 
 const pluginID = 'cpa-plugin-agy-panel';
 const cacheKey = 'cpa-agy-panel-quota-v1';
 const state = { accounts: [], snapshots: new Map(), errors: new Map(), refreshing: new Set(), statusUpdating: new Set(), config: {}, page: 1, polling: false, proxyBusy: false, session: null };
-const ui = Object.fromEntries(['summary', 'banner', 'grid', 'pagination', 'proxies', 'proxy-message', 'save-proxies', 'apply-proxies', 'search', 'filter', 'reload', 'theme', 'show-claude-gpt', 'display-message'].map((id) => [id, document.getElementById(id)]));
+const ui = Object.fromEntries(['summary', 'banner', 'grid', 'pagination', 'proxies', 'proxy-message', 'save-proxies', 'apply-proxies', 'search', 'filter', 'reload', 'theme', 'show-claude-gpt', 'display-message', 'ua', 'save-ua', 'ua-message'].map((id) => [id, document.getElementById(id)]));
 
 function readSession() {
   let raw = localStorage.getItem('cli-proxy-auth');
@@ -89,6 +89,7 @@ function renderCard(account) {
   if (meta.childElementCount) card.append(meta);
   if (account.status_message) card.append(node('div', 'error', account.status_message));
   if (state.errors.has(key)) card.append(node('div', 'error', state.errors.get(key)));
+  if (saved.quotaNotice) card.append(node('div', 'meta', saved.quotaNotice));
   const groups = visibleQuotaGroups(saved.groups ?? [], state.config.show_claude_gpt === true);
   if (!groups.length) card.append(node('div', 'empty', saved.quotaAt ? '暂无可显示的额度分组' : '暂无额度，点击刷新获取'));
   for (const group of groups) {
@@ -163,13 +164,14 @@ async function fetchQuota(account) {
     const credential = await response.json();
     project = credential.project_id ?? credential.projectId ?? credential.installed?.project_id ?? credential.web?.project_id;
   }
-  return fetchUpstream({ ...account, project_id: project }, 'quota');
+  return fetchQuotaGroups({ ...account, project_id: project }, state.config.refresh_user_agent || DEFAULT_USER_AGENT,
+    (request) => managementFetch('/api-call', { method: 'POST', body: JSON.stringify(request) }, 65_000));
 }
 
 async function fetchUpstream(account, kind) {
-  const request = buildRefreshRequest(account, kind);
+  const request = buildRefreshRequest(account, kind, state.config.refresh_user_agent || DEFAULT_USER_AGENT);
   const payload = parseUpstream(await managementFetch('/api-call', { method: 'POST', body: JSON.stringify(request) }, 65_000));
-  return kind === 'quota' ? parseQuota(payload) : parseSubscription(payload);
+  return parseSubscription(payload);
 }
 
 async function refreshAccount(account) {
@@ -184,7 +186,11 @@ async function refreshAccount(account) {
     const results = await Promise.allSettled([fetchUpstream(account, 'subscription'), fetchQuota(account)]);
     for (const [index, result] of results.entries()) {
       if (result.status === 'fulfilled') {
-        saved[index === 0 ? 'subscription' : 'groups'] = result.value;
+        if (index === 0) saved.subscription = result.value;
+        else {
+          saved.groups = result.value.groups;
+          saved.quotaNotice = result.value.notice;
+        }
         saved[index === 0 ? 'subscriptionAt' : 'quotaAt'] = new Date().toISOString();
       } else errors.push(`${index === 0 ? '套餐' : '额度'}刷新失败：${result.reason.message}`);
     }
@@ -248,6 +254,17 @@ async function editProxies(apply) {
 
 ui['save-proxies'].addEventListener('click', () => editProxies(false));
 ui['apply-proxies'].addEventListener('click', () => editProxies(true));
+ui['save-ua'].addEventListener('click', async () => {
+  ui['save-ua'].disabled = true;
+  try {
+    const value = ui.ua.value.trim();
+    validateUserAgent(value);
+    await saveConfig({ refresh_user_agent: value });
+    ui.ua.value = value;
+    ui['ua-message'].textContent = '已保存';
+  } catch (error) { ui['ua-message'].textContent = `保存失败：${error.message}`; }
+  finally { ui['save-ua'].disabled = false; }
+});
 ui['show-claude-gpt'].addEventListener('change', async () => {
   ui['show-claude-gpt'].disabled = true;
   try {
@@ -269,7 +286,7 @@ ui.theme.addEventListener('click', () => {
 });
 
 async function initialize() {
-  for (const id of ['save-proxies', 'apply-proxies', 'reload', 'show-claude-gpt']) ui[id].disabled = true;
+  for (const id of ['save-proxies', 'apply-proxies', 'reload', 'show-claude-gpt', 'save-ua']) ui[id].disabled = true;
   try {
     document.documentElement.dataset.theme = localStorage.getItem('cpa-agy-panel-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     state.session = readSession();
@@ -277,8 +294,9 @@ async function initialize() {
     if (cached) state.snapshots = new Map(JSON.parse(cached));
     state.config = await managementFetch(`/plugins/${pluginID}/config`);
     ui.proxies.value = state.config.proxy_list ?? '';
+    ui.ua.value = state.config.refresh_user_agent || DEFAULT_USER_AGENT;
     ui['show-claude-gpt'].checked = state.config.show_claude_gpt === true;
-    for (const id of ['save-proxies', 'apply-proxies', 'reload', 'show-claude-gpt']) ui[id].disabled = false;
+    for (const id of ['save-proxies', 'apply-proxies', 'reload', 'show-claude-gpt', 'save-ua']) ui[id].disabled = false;
     await pollAccounts();
     setInterval(() => { if (!document.hidden) pollAccounts(); }, 30_000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) pollAccounts(); });

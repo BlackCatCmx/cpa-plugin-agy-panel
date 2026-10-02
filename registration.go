@@ -16,6 +16,7 @@ func pluginRegistration() any {
 			"GitHubRepository": "https://github.com/BlackCatCmx/cpa-plugin-agy-panel",
 			"Logo":             "",
 			"ConfigFields": []map[string]any{
+				{"Name": "refresh_user_agent", "Type": "string", "EnumValues": []string{}, "Description": "User-Agent for manual refreshes. Defaults to the CPA management frontend Antigravity UA."},
 				{"Name": "proxy_list", "Type": "string", "EnumValues": []string{}, "Description": "Proxy URLs, one per line, assigned cyclically to Antigravity credentials."},
 				{"Name": "show_claude_gpt", "Type": "boolean", "EnumValues": []string{}, "Description": "Show Claude and GPT quota groups. Disabled by default."},
 			},
