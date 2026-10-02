@@ -1,7 +1,7 @@
 import { accountKey, assignProxies, parseProxies } from './panel-logic.mjs';
 
 export function setupProxyManager({ getConfig, loadAccounts, managementFetch, saveConfig, setBusy }) {
-  const ui = Object.fromEntries(['proxy-dialog', 'open-proxy', 'close-proxy', 'proxy-controls', 'proxy-list', 'credential-list', 'proxy-select-all', 'credential-select-all', 'credential-search', 'proxy-selection', 'proxies', 'save-proxies', 'increment-proxies', 'apply-proxies', 'clear-selected-proxies', 'clear-proxies', 'proxy-message'].map((id) => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['proxy-dialog', 'open-proxy', 'close-proxy', 'proxy-controls', 'proxy-list', 'credential-list', 'proxy-select-all', 'credential-select-all', 'credential-search', 'proxy-selection', 'proxies', 'save-proxies', 'increment-proxies', 'apply-proxies', 'clear-selected-proxies', 'proxy-message'].map((id) => [id, document.getElementById(id)]));
   let proxies = [];
   let accounts = [];
   let busy = false;
@@ -18,7 +18,6 @@ export function setupProxyManager({ getConfig, loadAccounts, managementFetch, sa
     ui['proxy-selection'].textContent = `已选 ${selectedProxies.size} / ${proxies.length} 个代理 · ${selectedAccounts.size} / ${accounts.length} 个凭证`;
     ui['apply-proxies'].disabled = ui['increment-proxies'].disabled = !selectedProxies.size || !selectedAccounts.size;
     ui['clear-selected-proxies'].disabled = !selectedAccounts.size;
-    ui['clear-proxies'].disabled = !accounts.length;
   }
 
   function choice(text, detail, key, selected, disabled = false) {
@@ -95,9 +94,8 @@ export function setupProxyManager({ getConfig, loadAccounts, managementFetch, sa
 
   const patchProxy = (fields) => managementFetch('/auth-files/fields', { method: 'PATCH', body: JSON.stringify(fields) });
 
-  async function resolveTargets(all) {
+  async function resolveTargets() {
     const latest = await loadAccounts();
-    if (all) return latest;
     const targets = latest.filter((account) => selectedAccounts.has(accountKey(account)));
     if (targets.length !== selectedAccounts.size) throw new Error('选中的凭证列表已变化，请重新打开代理管理后选择');
     return targets;
@@ -106,7 +104,7 @@ export function setupProxyManager({ getConfig, loadAccounts, managementFetch, sa
   async function apply(mode) {
     if (!selectedProxies.size || !selectedAccounts.size) throw new Error('请选择代理和凭证');
     const chosenProxies = proxies.filter((_, index) => selectedProxies.has(index));
-    const targets = await resolveTargets(false);
+    const targets = await resolveTargets();
     showResult(await assignProxies(targets, chosenProxies, patchProxy, showProgress,
       mode === 'incremental' ? async (account) => {
         const credential = await managementFetch(`/auth-files/download?name=${encodeURIComponent(account.name)}`);
@@ -156,12 +154,10 @@ export function setupProxyManager({ getConfig, loadAccounts, managementFetch, sa
   }));
   ui['apply-proxies'].addEventListener('click', () => run(() => apply('overwrite')));
   ui['increment-proxies'].addEventListener('click', () => run(() => apply('incremental')));
-  for (const [id, all] of [['clear-selected-proxies', false], ['clear-proxies', true]]) {
-    ui[id].addEventListener('click', () => run(async () => {
-      const targets = await resolveTargets(all);
-      if (!targets.length) throw new Error('请选择要清空代理的凭证');
-      if (!confirm(`清空${all ? '全部' : '所选'} ${targets.length} 个 Antigravity 凭证的独立代理？\n${all ? '不受当前勾选或搜索影响。' : ''}代理列表会保留。`)) return;
-      showResult(await assignProxies(targets, [''], patchProxy, showProgress));
-    }));
-  }
+  ui['clear-selected-proxies'].addEventListener('click', () => run(async () => {
+    const targets = await resolveTargets();
+    if (!targets.length) throw new Error('请选择要清空代理的凭证');
+    if (!confirm(`清空所选 ${targets.length} 个 Antigravity 凭证的独立代理？\n代理列表会保留。`)) return;
+    showResult(await assignProxies(targets, [''], patchProxy, showProgress));
+  }));
 }
