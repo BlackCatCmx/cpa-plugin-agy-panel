@@ -1,5 +1,5 @@
 const upstreamBase = 'https://daily-cloudcode-pa.googleapis.com/v1internal:';
-export const DEFAULT_USER_AGENT = 'antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)';
+export const DEFAULT_USER_AGENT = 'antigravity/hub/2.24.0 (aidev_client; os_type=darwin; arch=arm64; cl=1000335682)';
 export const QUOTA_URLS = [
   upstreamBase + 'retrieveUserQuotaSummary',
   'https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary',
